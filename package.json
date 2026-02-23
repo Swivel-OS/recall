@@ -1,0 +1,31 @@
+{
+  "name": "@swivellabs/recall",
+  "version": "0.1.0",
+  "description": "RECALL memory system - Trace + Encode layers",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "recall": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "cli": "node dist/cli.js"
+  },
+  "keywords": ["memory", "recall", "swivel", "ai"],
+  "author": "Swivel Labs",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "sqlite-vec": "^0.1.6",
+    "uuid": "^11.0.5",
+    "openai": "^4.85.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.13.4",
+    "@types/uuid": "^10.0.0",
+    "typescript": "^5.7.3"
+  }
+}
