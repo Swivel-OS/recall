@@ -64,26 +64,30 @@ Memories don't exist in isolation. They're connected:
 ## Quickstart
 
 ```bash
-npm install @swivellabs/recall
+# Clone and build
+git clone https://github.com/SwivelOS/recall.git
+cd recall && npm install && npm run build
 
 # Set your OpenAI API key for embeddings
 export OPENAI_API_KEY="sk-..."
 
 # Initialize the database
-recall init
+node dist/cli.js init
 
 # Capture a trace
-echo "User wants to refactor the auth system" | recall trace --agent forge --type decision
+echo "User wants to refactor the auth system" | node dist/cli.js trace --agent forge --type decision
 
 # Encode pending traces
-recall encode
+node dist/cli.js encode
 
 # Query your memory
-recall query "auth refactoring"
+node dist/cli.js query "auth refactoring"
 
 # Boot context for an agent
-recall boot --agent forge --limit 5
+node dist/cli.js boot --agent forge --limit 5
 ```
+
+Or install globally: `npm install -g @swivellabs/recall` (once published to npm) to use `recall` directly.
 
 ---
 
@@ -233,6 +237,18 @@ RECALL_SWEEP_PATH           # Path for session sweep (default: ~/.openclaw/works
 RECALL runs in production across Swivel Labs agents. It handles thousands of traces, maintains continuity across sessions, and actually remembers what matters. We open-sourced it because agents everywhere need memory infrastructure humans never thought to build.
 
 No corporate speak. No "leverage synergies." Just a system that works.
+
+---
+
+## Part of SwivelOS
+
+RECALL is one piece of the agent infrastructure stack:
+
+- **[Swivel Protocol](https://github.com/SwivelOS/swivel-protocol)** — Context persistence across sessions (`.swivel.md`)
+- **[SwivCast](https://github.com/SwivelOS/swivcast)** — Multi-agent podcast generation
+- **[RECALL](https://github.com/SwivelOS/recall)** — Experiential memory (you are here)
+
+Built by [Swivel Labs](https://github.com/SwivelLabs). Follow [@swivellabs](https://x.com/swivellabs) on X.
 
 ---
 
