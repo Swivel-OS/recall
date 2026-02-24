@@ -54,7 +54,7 @@ These rates are tunable via code modification. The principle (different rates pe
 
 ### Molecular Memory (Mole-Syn)
 
-The bond system draws from ByteDance's [Mole-Syn: Molecular Synthetic Memory](https://arxiv.org/abs/2410.17950):
+The bond system draws from ByteDance's [Mole-Syn: Mapping the Topology of Long Chain-of-Thought Reasoning](https://arxiv.org/abs/2601.06002):
 
 > "Memories are not isolated entities but form a molecular structure through causal, temporal, and semantic bonds."
 
@@ -530,6 +530,6 @@ The v0.3 schema supports these. The pipeline is designed to extend.
 
 1. **CoALA**: Wang et al. "Cognitive Architectures for Language Agents." 2023.
 2. **Generative Agents**: Park et al. "Generative Agents: Interactive Simulacra of Human Behavior." 2023.
-3. **Mole-Syn**: ByteDance Research. "Mole-Syn: Molecular Synthetic Memory for Language Agents." 2024.
+3. **Mole-Syn**: Wang et al. "Mapping the Topology of Long Chain-of-Thought Reasoning." ByteDance Research, 2025. arxiv:2601.06002
 4. **Ebbinghaus**: Ebbinghaus, H. "Memory: A Contribution to Experimental Psychology." 1885.
 5. **Levels of Processing**: Craik & Lockhart. "Levels of Processing: A Framework for Memory Research." 1972.
