@@ -16,6 +16,7 @@ export interface Trace {
   channel: string;
   trace_type: TraceType;
   is_identity_trace: boolean;
+  significance: number; // 1-10 scale
   encode_status: EncodeStatus;
   created_at: string;
 }
@@ -33,6 +34,7 @@ export interface CreateTraceInput {
   channel: string;
   trace_type: TraceType;
   is_identity_trace: boolean;
+  significance: number;
   created_at: string;
 }
 
@@ -43,8 +45,8 @@ export function createTrace(input: CreateTraceInput): Trace {
     INSERT INTO traces (
       trace_id, agent_id, session_id, session_seq, timestamp_start, timestamp_end,
       content_raw, content_hash, participants, channel, trace_type, 
-      is_identity_trace, encode_status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      is_identity_trace, significance, encode_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `);
 
   stmt.run(
@@ -60,6 +62,7 @@ export function createTrace(input: CreateTraceInput): Trace {
     input.channel,
     input.trace_type,
     input.is_identity_trace ? 1 : 0,
+    input.significance,
     input.created_at
   );
 
@@ -92,7 +95,7 @@ export function getTraceByContentHash(contentHash: string): Trace | null {
 
 export function getPendingTraces(): Trace[] {
   const db = getDb();
-  const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY created_at ASC');
+  const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY significance DESC, created_at ASC');
   const rows = stmt.all('pending') as any[];
   
   return rows.map(rowToTrace);
@@ -100,7 +103,7 @@ export function getPendingTraces(): Trace[] {
 
 export function getPendingTracesLimited(limit: number): Trace[] {
   const db = getDb();
-  const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY created_at ASC LIMIT ?');
+  const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY significance DESC, created_at ASC LIMIT ?');
   const rows = stmt.all('pending', limit) as any[];
   
   return rows.map(rowToTrace);
@@ -110,6 +113,12 @@ export function updateTraceEncodeStatus(traceId: string, status: EncodeStatus): 
   const db = getDb();
   const stmt = db.prepare('UPDATE traces SET encode_status = ? WHERE trace_id = ?');
   stmt.run(status, traceId);
+}
+
+export function updateTraceSignificance(traceId: string, significance: number): void {
+  const db = getDb();
+  const stmt = db.prepare('UPDATE traces SET significance = ? WHERE trace_id = ?');
+  stmt.run(significance, traceId);
 }
 
 export function getNextSessionSeq(sessionId: string): number {
@@ -133,6 +142,13 @@ export function getTraceCountByStatus(status: EncodeStatus): number {
   return row.count;
 }
 
+export function getHighSignificanceTraces(minSignificance: number = 7): Trace[] {
+  const db = getDb();
+  const stmt = db.prepare('SELECT * FROM traces WHERE significance >= ? ORDER BY significance DESC, created_at DESC');
+  const rows = stmt.all(minSignificance) as any[];
+  return rows.map(rowToTrace);
+}
+
 function rowToTrace(row: any): Trace {
   return {
     trace_id: row.trace_id,
@@ -147,6 +163,7 @@ function rowToTrace(row: any): Trace {
     channel: row.channel,
     trace_type: row.trace_type as TraceType,
     is_identity_trace: row.is_identity_trace === 1,
+    significance: row.significance || 5,
     encode_status: row.encode_status as EncodeStatus,
     created_at: row.created_at
   };

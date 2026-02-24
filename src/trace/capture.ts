@@ -25,9 +25,20 @@ export interface CapturedTrace {
   channel: string;
   trace_type: string;
   is_identity_trace: boolean;
+  significance: number;
   encode_status: 'pending';
   created_at: string;
 }
+
+// Keywords for significance detection
+const SIGNIFICANCE_KEYWORDS: Record<number, string[]> = {
+  10: ['identity', 'core value', 'fundamental belief', 'who i am', 'my purpose', 'life goal'],
+  9: ['major decision', 'critical failure', 'lesson learned', 'breakthrough', 'pivot', 'core change'],
+  8: ['milestone', 'strategy shift', 'key learning', 'important decision', 'significant'],
+  7: ['decided to', 'conclusion', 'realization', 'insight', 'understood that'],
+  4: ['task', 'working on', 'implemented', 'fixed'],
+  1: ['status', 'heartbeat', 'ping', 'checking in']
+};
 
 export function captureTrace(input: CaptureInput): CapturedTrace {
   const now = new Date();
@@ -38,6 +49,9 @@ export function captureTrace(input: CaptureInput): CapturedTrace {
   const contentHash = createHash('sha256')
     .update(input.content_raw)
     .digest('hex');
+
+  // Calculate significance score
+  const significance = calculateSignificance(input);
   
   const traceInput: CreateTraceInput = {
     trace_id: traceId,
@@ -52,6 +66,7 @@ export function captureTrace(input: CaptureInput): CapturedTrace {
     channel: input.channel,
     trace_type: input.trace_type,
     is_identity_trace: input.is_identity_trace ?? false,
+    significance: significance,
     created_at: now.toISOString()
   };
 
@@ -70,7 +85,39 @@ export function captureTrace(input: CaptureInput): CapturedTrace {
     channel: input.channel,
     trace_type: input.trace_type,
     is_identity_trace: traceInput.is_identity_trace,
+    significance: significance,
     encode_status: 'pending',
     created_at: traceInput.created_at
   };
+}
+
+function calculateSignificance(input: CaptureInput): number {
+  // Start with base significance from trace type
+  let significance = 5;
+  
+  if (input.is_identity_trace) {
+    significance = 9;
+  } else {
+    switch (input.trace_type) {
+      case 'decision': significance = 7; break;
+      case 'task_completion': significance = 6; break;
+      case 'error': significance = 7; break;
+      case 'handoff': significance = 5; break;
+      case 'conversation': significance = 4; break;
+    }
+  }
+
+  const content = input.content_raw.toLowerCase();
+
+  // Adjust based on keywords
+  for (const [score, keywords] of Object.entries(SIGNIFICANCE_KEYWORDS)) {
+    const scoreNum = parseInt(score);
+    for (const keyword of keywords) {
+      if (content.includes(keyword.toLowerCase())) {
+        significance = Math.max(significance, scoreNum);
+      }
+    }
+  }
+
+  return Math.min(10, Math.max(1, significance));
 }

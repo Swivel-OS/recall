@@ -1,6 +1,23 @@
 import { getDb } from './init.js';
 
+export type MemoryType = 'episodic' | 'semantic' | 'procedural' | 'self_model';
 export type ConsolidationStatus = 'pending' | 'consolidated' | 'pruned';
+
+// Decay rates per memory type (daily)
+export const DECAY_RATES: Record<MemoryType, number> = {
+  'self_model': 0.01,    // Very slow decay
+  'semantic': 0.02,      // Slow decay
+  'procedural': 0.03,    // Moderate decay
+  'episodic': 0.07       // Fast decay
+};
+
+// Significance-based decay modifiers
+export function getDecayModifier(significance: number): number {
+  if (significance >= 9) return 0.5;  // Half decay for critical memories
+  if (significance >= 7) return 0.7;  // Reduced decay for high significance
+  if (significance >= 4) return 1.0;  // Normal decay
+  return 1.3; // Accelerated decay for low significance
+}
 
 export interface Encode {
   encode_id: string;
@@ -18,6 +35,7 @@ export interface Encode {
   topics: string[];
   entities: Record<string, string[]> | null;
   compression_ratio: number;
+  memory_type: MemoryType;
   consolidation_status: ConsolidationStatus;
   is_shared: boolean;
   created_at: string;
@@ -39,6 +57,7 @@ export interface CreateEncodeInput {
   topics: string[];
   entities: Record<string, string[]> | null;
   compression_ratio: number;
+  memory_type: MemoryType;
   is_shared: boolean;
   created_at: string;
 }
@@ -52,8 +71,8 @@ export function createEncode(input: CreateEncodeInput): Encode {
       encode_id, agent_id, source_trace_ids, session_id, timestamp_encoded,
       semantic_summary, semantic_embedding, embedding_model, emotional_valence,
       emotional_tags, importance_score, importance_reason, topics, entities,
-      compression_ratio, consolidation_status, is_shared, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+      compression_ratio, memory_type, consolidation_status, is_shared, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
   `);
 
   const embeddingBlob = Buffer.from(new Float32Array(input.semantic_embedding).buffer);
@@ -74,6 +93,7 @@ export function createEncode(input: CreateEncodeInput): Encode {
     JSON.stringify(input.topics),
     input.entities ? JSON.stringify(input.entities) : null,
     input.compression_ratio,
+    input.memory_type,
     input.is_shared ? 1 : 0,
     input.created_at
   );
@@ -125,6 +145,55 @@ export function semanticSearch(queryEmbedding: number[], limit: number = 10): Ar
   }));
 }
 
+export function semanticSearchWithDecay(
+  queryEmbedding: number[], 
+  limit: number = 10,
+  significanceThreshold: number = 0
+): Array<{ encode: Encode; distance: number; adjusted_score: number; days_old: number }> {
+  const db = getDb();
+  const now = new Date();
+  
+  const queryVec = new Float32Array(queryEmbedding);
+  
+  // Get more results initially to allow for decay filtering
+  const stmt = db.prepare(`
+    SELECT 
+      e.*,
+      vec_distance_L2(v.embedding, ?) as distance
+    FROM vec_encodes v
+    JOIN encodes e ON v.encode_id = e.encode_id
+    ORDER BY distance ASC
+    LIMIT ?
+  `);
+  
+  const rows = stmt.all(queryVec, limit * 3) as any[];
+  
+  // Apply decay to scores
+  const results = rows.map(row => {
+    const encode = rowToEncode(row);
+    const encodeDate = new Date(encode.timestamp_encoded);
+    const daysOld = Math.max(0, (now.getTime() - encodeDate.getTime()) / (1000 * 60 * 60 * 24));
+    
+    // Calculate decay-adjusted score
+    const rawScore = 1 / (1 + row.distance); // Convert distance to similarity (0-1)
+    const decayRate = DECAY_RATES[encode.memory_type];
+    const decayedScore = rawScore * Math.pow(1 - decayRate, daysOld);
+    
+    return {
+      encode,
+      distance: row.distance,
+      adjusted_score: decayedScore,
+      days_old: Math.round(daysOld)
+    };
+  });
+  
+  // Filter by significance threshold and sort by adjusted score
+  return results
+    .filter(r => r.adjusted_score >= significanceThreshold)
+    .sort((a, b) => b.adjusted_score - a.adjusted_score)
+    .slice(0, limit);
+}
+
 export function getEncodeCount(): number {
   const db = getDb();
   const stmt = db.prepare('SELECT COUNT(*) as count FROM encodes');
@@ -154,6 +223,113 @@ export function getRecentEncodesForAgent(agentId: string, limit: number = 5): En
   return rows.map(rowToEncode);
 }
 
+export function getEncodesForBoot(
+  agentId: string, 
+  limit: number = 5,
+  includeRelated: boolean = true
+): Array<{ encode: Encode; related?: Encode[]; cluster_size?: number }> {
+  const db = getDb();
+
+  // Get high-quality recent encodes with significance weighting
+  const stmt = db.prepare(`
+    SELECT e.*, COALESCE(t.significance, 5) as trace_significance
+    FROM encodes e
+    LEFT JOIN traces t ON t.trace_id = json_extract(e.source_trace_ids, '$[0]')
+    WHERE e.agent_id = ? 
+    ORDER BY 
+      CASE e.memory_type
+        WHEN 'self_model' THEN 4
+        WHEN 'semantic' THEN 3
+        WHEN 'procedural' THEN 2
+        ELSE 1
+      END DESC,
+      COALESCE(t.significance, 5) DESC,
+      e.importance_score DESC,
+      e.timestamp_encoded DESC 
+    LIMIT ?
+  `);
+
+  const rows = stmt.all(agentId, limit) as any[];
+  const encodes = rows.map(rowToEncode);
+
+  if (!includeRelated) {
+    return encodes.map(e => ({ encode: e }));
+  }
+
+  // Get related encodes via bonds
+  const results: Array<{ encode: Encode; related?: Encode[]; cluster_size?: number }> = [];
+  
+  for (const encode of encodes) {
+    const relatedStmt = db.prepare(`
+      SELECT e.* 
+      FROM encodes e
+      JOIN bonds b ON (b.encode_id_a = e.encode_id OR b.encode_id_b = e.encode_id)
+      WHERE (b.encode_id_a = ? OR b.encode_id_b = ?)
+        AND e.encode_id != ?
+      ORDER BY b.strength DESC
+      LIMIT 3
+    `);
+    
+    const relatedRows = relatedStmt.all(encode.encode_id, encode.encode_id, encode.encode_id) as any[];
+    const related = relatedRows.map(rowToEncode);
+    
+    // Get cluster size
+    const clusterStmt = db.prepare(`
+      SELECT COUNT(*) as count FROM bonds 
+      WHERE encode_id_a = ? OR encode_id_b = ?
+    `);
+    const clusterRow = clusterStmt.get(encode.encode_id, encode.encode_id) as any;
+    
+    results.push({
+      encode,
+      related: related.length > 0 ? related : undefined,
+      cluster_size: clusterRow.count
+    });
+  }
+
+  return results;
+}
+
+export function findSimilarEncodes(
+  embedding: number[], 
+  threshold: number = 0.8, 
+  excludeId?: string
+): Array<{ encode: Encode; similarity: number }> {
+  const db = getDb();
+  const queryVec = new Float32Array(embedding);
+  
+  // Use cosine similarity threshold
+  // L2 distance of ~0.632 corresponds to cosine similarity of ~0.8 for normalized vectors
+  const maxDistance = Math.sqrt(2 * (1 - threshold));
+  
+  let sql = `
+    SELECT 
+      e.*,
+      vec_distance_L2(v.embedding, ?) as distance
+    FROM vec_encodes v
+    JOIN encodes e ON v.encode_id = e.encode_id
+    WHERE vec_distance_L2(v.embedding, ?) < ?
+  `;
+  
+  if (excludeId) {
+    sql += ` AND e.encode_id != ?`;
+  }
+  
+  sql += ` ORDER BY distance ASC LIMIT 20`;
+  
+  const stmt = db.prepare(sql);
+  const params = excludeId 
+    ? [queryVec, queryVec, maxDistance, excludeId]
+    : [queryVec, queryVec, maxDistance];
+  
+  const rows = stmt.all(...params) as any[];
+  
+  return rows.map(row => ({
+    encode: rowToEncode(row),
+    similarity: 1 - (row.distance * row.distance) / 2 // Approximate cosine from L2
+  }));
+}
+
 function rowToEncode(row: any): Encode {
   return {
     encode_id: row.encode_id,
@@ -171,6 +347,7 @@ function rowToEncode(row: any): Encode {
     topics: JSON.parse(row.topics),
     entities: row.entities ? JSON.parse(row.entities) : null,
     compression_ratio: row.compression_ratio,
+    memory_type: (row.memory_type || 'episodic') as MemoryType,
     consolidation_status: row.consolidation_status as ConsolidationStatus,
     is_shared: row.is_shared === 1,
     created_at: row.created_at
