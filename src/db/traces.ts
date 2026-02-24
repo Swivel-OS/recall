@@ -80,10 +80,28 @@ export function getTraceById(traceId: string): Trace | null {
   return rowToTrace(row);
 }
 
+export function getTraceByContentHash(contentHash: string): Trace | null {
+  const db = getDb();
+  const stmt = db.prepare('SELECT * FROM traces WHERE content_hash = ?');
+  const row = stmt.get(contentHash) as any;
+  
+  if (!row) return null;
+  
+  return rowToTrace(row);
+}
+
 export function getPendingTraces(): Trace[] {
   const db = getDb();
   const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY created_at ASC');
   const rows = stmt.all('pending') as any[];
+  
+  return rows.map(rowToTrace);
+}
+
+export function getPendingTracesLimited(limit: number): Trace[] {
+  const db = getDb();
+  const stmt = db.prepare('SELECT * FROM traces WHERE encode_status = ? ORDER BY created_at ASC LIMIT ?');
+  const rows = stmt.all('pending', limit) as any[];
   
   return rows.map(rowToTrace);
 }

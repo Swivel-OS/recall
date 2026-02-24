@@ -139,6 +139,21 @@ export function getEncodeCountByStatus(status: ConsolidationStatus): number {
   return row.count;
 }
 
+export function getRecentEncodesForAgent(agentId: string, limit: number = 5): Encode[] {
+  const db = getDb();
+
+  // Query recent encodes for this agent, prioritizing by importance and recency
+  const stmt = db.prepare(`
+    SELECT * FROM encodes 
+    WHERE agent_id = ? 
+    ORDER BY importance_score DESC, timestamp_encoded DESC 
+    LIMIT ?
+  `);
+
+  const rows = stmt.all(agentId, limit) as any[];
+  return rows.map(rowToEncode);
+}
+
 function rowToEncode(row: any): Encode {
   return {
     encode_id: row.encode_id,

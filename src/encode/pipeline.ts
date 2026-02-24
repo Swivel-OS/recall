@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import OpenAI from 'openai';
-import { getPendingTraces, updateTraceEncodeStatus, Trace } from '../db/traces.js';
+import { updateTraceEncodeStatus, Trace, getPendingTracesLimited } from '../db/traces.js';
 import { createEncode, CreateEncodeInput } from '../db/encodes.js';
 import { config } from '../config.js';
 
@@ -22,13 +22,26 @@ interface EncodeResult {
   error?: string;
 }
 
-export async function runEncodePipeline(): Promise<EncodeResult[]> {
-  const pendingTraces = getPendingTraces();
+export interface EncodePipelineOptions {
+  batchSize?: number;
+  concurrency?: number;
+}
+
+export async function runEncodePipeline(options: EncodePipelineOptions = {}): Promise<EncodeResult[]> {
+  const batchSize = options.batchSize || 50;
+  const concurrency = options.concurrency || 5;
+
+  // Get limited pending traces to avoid memory issues
+  const pendingTraces = getPendingTracesLimited(batchSize);
   const results: EncodeResult[] = [];
 
-  console.log(`Processing ${pendingTraces.length} pending traces...`);
+  console.log(`Processing ${pendingTraces.length} pending traces (batch size: ${batchSize}, concurrency: ${concurrency})...`);
 
-  for (const trace of pendingTraces) {
+  // Process traces with concurrency limit
+  const queue = [...pendingTraces];
+  const inProgress: Promise<void>[] = [];
+
+  async function processNext(trace: Trace): Promise<void> {
     try {
       const encodeId = await processTrace(trace);
       results.push({
@@ -36,8 +49,9 @@ export async function runEncodePipeline(): Promise<EncodeResult[]> {
         trace_id: trace.trace_id,
         success: true
       });
+      process.stdout.write('.');
     } catch (error) {
-      console.error(`Failed to encode trace ${trace.trace_id}:`, error);
+      console.error(`\nFailed to encode trace ${trace.trace_id}:`, error);
       results.push({
         encode_id: '',
         trace_id: trace.trace_id,
@@ -47,6 +61,24 @@ export async function runEncodePipeline(): Promise<EncodeResult[]> {
     }
   }
 
+  while (queue.length > 0 || inProgress.length > 0) {
+    // Fill up to concurrency limit
+    while (inProgress.length < concurrency && queue.length > 0) {
+      const trace = queue.shift()!;
+      const promise = processNext(trace).then(() => {
+        const index = inProgress.indexOf(promise);
+        if (index > -1) inProgress.splice(index, 1);
+      });
+      inProgress.push(promise);
+    }
+
+    // Wait for at least one to complete
+    if (inProgress.length > 0) {
+      await Promise.race(inProgress);
+    }
+  }
+
+  console.log(); // New line after progress dots
   return results;
 }
 
