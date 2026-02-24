@@ -1,7 +1,7 @@
 {
   "name": "@swivellabs/recall",
   "version": "0.3.0",
-  "description": "RECALL memory system - v0.3 with decay rates, memory bonds, contradiction detection, and significance scoring",
+  "description": "Persistent, typed, decaying memory with molecular bonds for AI agents",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -13,14 +13,37 @@
     "dev": "tsc --watch",
     "cli": "node dist/cli.js"
   },
-  "keywords": ["memory", "recall", "swivel", "ai"],
-  "author": "Swivel Labs",
+  "keywords": [
+    "memory",
+    "recall",
+    "ai",
+    "agent",
+    "llm",
+    "embeddings",
+    "sqlite",
+    "vector-search",
+    "cognitive-architecture",
+    "episodic-memory",
+    "semantic-memory"
+  ],
+  "author": "Swivel Labs <swivellabs@pm.me>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SwivelLabs/recall.git"
+  },
+  "bugs": {
+    "url": "https://github.com/SwivelLabs/recall/issues"
+  },
+  "homepage": "https://github.com/SwivelLabs/recall#readme",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "better-sqlite3": "^11.8.1",
+    "openai": "^4.85.1",
     "sqlite-vec": "^0.1.6",
-    "uuid": "^11.0.5",
-    "openai": "^4.85.1"
+    "uuid": "^11.0.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
