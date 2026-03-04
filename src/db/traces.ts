@@ -17,6 +17,7 @@ export interface Trace {
   trace_type: TraceType;
   is_identity_trace: boolean;
   significance: number; // 1-10 scale
+  tags?: string[];
   encode_status: EncodeStatus;
   created_at: string;
 }
@@ -35,6 +36,7 @@ export interface CreateTraceInput {
   trace_type: TraceType;
   is_identity_trace: boolean;
   significance: number;
+  tags?: string[];
   created_at: string;
 }
 
@@ -45,8 +47,8 @@ export function createTrace(input: CreateTraceInput): Trace {
     INSERT INTO traces (
       trace_id, agent_id, session_id, session_seq, timestamp_start, timestamp_end,
       content_raw, content_hash, participants, channel, trace_type, 
-      is_identity_trace, significance, encode_status, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      is_identity_trace, significance, tags, encode_status, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
   `);
 
   stmt.run(
@@ -63,6 +65,7 @@ export function createTrace(input: CreateTraceInput): Trace {
     input.trace_type,
     input.is_identity_trace ? 1 : 0,
     input.significance,
+    input.tags ? JSON.stringify(input.tags) : null,
     input.created_at
   );
 
@@ -164,6 +167,7 @@ function rowToTrace(row: any): Trace {
     trace_type: row.trace_type as TraceType,
     is_identity_trace: row.is_identity_trace === 1,
     significance: row.significance || 5,
+    tags: row.tags ? JSON.parse(row.tags) : undefined,
     encode_status: row.encode_status as EncodeStatus,
     created_at: row.created_at
   };

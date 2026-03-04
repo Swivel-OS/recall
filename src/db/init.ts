@@ -34,6 +34,7 @@ export function initDatabase(): void {
       trace_type TEXT NOT NULL CHECK(trace_type IN ('conversation', 'decision', 'task_completion', 'error', 'handoff')),
       is_identity_trace INTEGER NOT NULL DEFAULT 0,
       significance INTEGER DEFAULT 5 CHECK(significance >= 1 AND significance <= 10),
+      tags TEXT,
       encode_status TEXT NOT NULL DEFAULT 'pending' CHECK(encode_status IN ('pending', 'encoded', 'skipped')),
       created_at TEXT NOT NULL
     );
@@ -146,6 +147,21 @@ export function runMigrations(): void {
     }
   } catch (e) {
     console.error('  → Error adding memory_type column:', e);
+  }
+
+  // Migration: Add tags column to traces if not exists
+  try {
+    const tagsCheck = database.prepare(`
+      SELECT COUNT(*) as count FROM pragma_table_info('traces') WHERE name = 'tags'
+    `).get() as any;
+    
+    if (tagsCheck.count === 0) {
+      console.log('  → Adding tags column to traces...');
+      database.exec(`ALTER TABLE traces ADD COLUMN tags TEXT`);
+      console.log('  → Added tags column for user_stated_fact and other trace tags');
+    }
+  } catch (e) {
+    console.error('  → Error adding tags column:', e);
   }
 
   // Migration: Create bonds table if not exists

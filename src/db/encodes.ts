@@ -227,15 +227,32 @@ export function getEncodesForBoot(
   agentId: string, 
   limit: number = 5,
   includeRelated: boolean = true
-): Array<{ encode: Encode; related?: Encode[]; cluster_size?: number }> {
+): Array<{ encode: Encode; related?: Encode[]; cluster_size?: number; is_user_fact?: boolean }> {
   const db = getDb();
 
-  // Get high-quality recent encodes with significance weighting
-  const stmt = db.prepare(`
-    SELECT e.*, COALESCE(t.significance, 5) as trace_significance
+  // First, get any user_stated_fact tagged encodes (highest priority)
+  const userFactStmt = db.prepare(`
+    SELECT e.*, COALESCE(t.significance, 5) as trace_significance, 1 as is_user_fact
     FROM encodes e
     LEFT JOIN traces t ON t.trace_id = json_extract(e.source_trace_ids, '$[0]')
     WHERE e.agent_id = ? 
+      AND t.tags IS NOT NULL
+      AND json_extract(t.tags, '$') LIKE '%user_stated_fact%'
+    ORDER BY e.timestamp_encoded DESC
+    LIMIT ?
+  `);
+
+  const userFactRows = userFactStmt.all(agentId, limit) as any[];
+  const userFactEncodes = userFactRows.map(rowToEncode);
+  const userFactIds = new Set(userFactEncodes.map(e => e.encode_id));
+
+  // Get high-quality recent encodes with significance weighting
+  const stmt = db.prepare(`
+    SELECT e.*, COALESCE(t.significance, 5) as trace_significance, 0 as is_user_fact
+    FROM encodes e
+    LEFT JOIN traces t ON t.trace_id = json_extract(e.source_trace_ids, '$[0]')
+    WHERE e.agent_id = ? 
+      AND e.encode_id NOT IN (${userFactIds.size > 0 ? Array(userFactIds.size).fill('?').join(',') : "''"})
     ORDER BY 
       CASE e.memory_type
         WHEN 'self_model' THEN 4
@@ -249,15 +266,18 @@ export function getEncodesForBoot(
     LIMIT ?
   `);
 
-  const rows = stmt.all(agentId, limit) as any[];
-  const encodes = rows.map(rowToEncode);
+  const params = userFactIds.size > 0 
+    ? [agentId, ...Array.from(userFactIds), limit]
+    : [agentId, limit];
+  const rows = stmt.all(...params) as any[];
+  const encodes = userFactEncodes.concat(rows.map(rowToEncode)).slice(0, limit);
 
   if (!includeRelated) {
     return encodes.map(e => ({ encode: e }));
   }
 
   // Get related encodes via bonds
-  const results: Array<{ encode: Encode; related?: Encode[]; cluster_size?: number }> = [];
+  const results: Array<{ encode: Encode; related?: Encode[]; cluster_size?: number; is_user_fact?: boolean }> = [];
   
   for (const encode of encodes) {
     const relatedStmt = db.prepare(`
@@ -283,7 +303,8 @@ export function getEncodesForBoot(
     results.push({
       encode,
       related: related.length > 0 ? related : undefined,
-      cluster_size: clusterRow.count
+      cluster_size: clusterRow.count,
+      is_user_fact: userFactIds.has(encode.encode_id)
     });
   }
 

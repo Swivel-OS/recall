@@ -10,6 +10,7 @@ export interface CaptureInput {
   channel: string;
   trace_type: 'conversation' | 'decision' | 'task_completion' | 'error' | 'handoff';
   is_identity_trace?: boolean;
+  tags?: string[];
 }
 
 export interface CapturedTrace {
@@ -26,6 +27,7 @@ export interface CapturedTrace {
   trace_type: string;
   is_identity_trace: boolean;
   significance: number;
+  tags?: string[];
   encode_status: 'pending';
   created_at: string;
 }
@@ -67,6 +69,7 @@ export function captureTrace(input: CaptureInput): CapturedTrace {
     trace_type: input.trace_type,
     is_identity_trace: input.is_identity_trace ?? false,
     significance: significance,
+    tags: input.tags,
     created_at: now.toISOString()
   };
 

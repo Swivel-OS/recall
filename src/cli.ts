@@ -68,6 +68,7 @@ async function handleTrace(args: string[]): Promise<void> {
   let traceType: 'conversation' | 'decision' | 'task_completion' | 'error' | 'handoff' = 'conversation';
   let isIdentity = false;
   let participants: string[] = ['user'];
+  let tags: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -95,6 +96,9 @@ async function handleTrace(args: string[]): Promise<void> {
       case '-p':
         participants = args[++i].split(',');
         break;
+      case '--tags':
+        tags = args[++i].split(',');
+        break;
       case '--content':
         content = args[++i];
         break;
@@ -113,7 +117,8 @@ async function handleTrace(args: string[]): Promise<void> {
     participants,
     channel,
     trace_type: traceType,
-    is_identity_trace: isIdentity
+    is_identity_trace: isIdentity,
+    tags: tags.length > 0 ? tags : undefined
   });
 
   console.log('Trace captured:');
@@ -121,6 +126,7 @@ async function handleTrace(args: string[]): Promise<void> {
   console.log(`  session_seq: ${trace.session_seq}`);
   console.log(`  type: ${trace.trace_type}`);
   console.log(`  significance: ${trace.significance}/10`);
+  console.log(`  tags: ${trace.tags?.join(', ') || 'none'}`);
   console.log(`  status: ${trace.encode_status}`);
 }
 
@@ -399,6 +405,7 @@ Commands:
     --type, -t <type>     Trace type: conversation|decision|task_completion|error|handoff
     --identity, -i        Mark as identity trace
     --participants, -p    Comma-separated list of participants
+    --tags <tags>         Comma-separated tags (e.g., user_stated_fact)
     --content <text>      Content (or pipe via stdin)
   encode [options]        Run encode pipeline on pending traces
     --batch-size, -b <n>  Number of traces to process (default: 50)
