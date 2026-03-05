@@ -28,6 +28,49 @@ export function getRecencyBoost(daysOld: number): number {
   return 1.0;                        // >72h: no boost
 }
 
+// Import reinforcement scoring
+import { getReinforcementScore, logMemoryAccess } from './access.js';
+
+/**
+ * Calculate final memory strength score.
+ * Combines: base similarity × decay × recency × reinforcement
+ */
+export function calculateMemoryStrength(
+  baseScore: number,
+  daysOld: number,
+  memoryType: MemoryType,
+  significance: number,
+  encodeId: string,
+  agentId: string,
+  accessType: 'query' | 'boot' | 'bond_traversal' = 'query'
+): { finalScore: number; logged: boolean } {
+  // Apply memory type decay
+  const decayRate = DECAY_RATES[memoryType];
+  const decayModifier = getDecayModifier(significance);
+  const effectiveDecay = decayRate * decayModifier;
+  const decayedScore = baseScore * Math.pow(1 - effectiveDecay, daysOld);
+  
+  // Apply recency boost
+  const recencyBoost = getRecencyBoost(daysOld);
+  
+  // Apply reinforcement (memories that are accessed get stronger)
+  const reinforcementScore = getReinforcementScore(encodeId);
+  
+  // Combined: decayed × recency × reinforcement
+  const finalScore = decayedScore * recencyBoost * reinforcementScore;
+  
+  // Log this access for future reinforcement
+  logMemoryAccess({
+    encode_id: encodeId,
+    agent_id: agentId,
+    access_type: accessType,
+    relevance_score: finalScore,
+    access_ts: new Date().toISOString()
+  });
+  
+  return { finalScore, logged: true };
+}
+
 export interface Encode {
   encode_id: string;
   agent_id: string;
@@ -157,8 +200,9 @@ export function semanticSearch(queryEmbedding: number[], limit: number = 10): Ar
 export function semanticSearchWithDecay(
   queryEmbedding: number[], 
   limit: number = 10,
+  agentId?: string,
   significanceThreshold: number = 0
-): Array<{ encode: Encode; distance: number; adjusted_score: number; days_old: number; recency_boost: number }> {
+): Array<{ encode: Encode; distance: number; adjusted_score: number; days_old: number; recency_boost: number; reinforcement: number }> {
   const db = getDb();
   const now = new Date();
   
@@ -177,28 +221,39 @@ export function semanticSearchWithDecay(
   
   const rows = stmt.all(queryVec, limit * 3) as any[];
   
-  // Apply decay and recency boost to scores
+  // Apply full temporal scoring: decay × recency × reinforcement
   const results = rows.map(row => {
     const encode = rowToEncode(row);
     const encodeDate = new Date(encode.timestamp_encoded);
     const daysOld = Math.max(0, (now.getTime() - encodeDate.getTime()) / (1000 * 60 * 60 * 24));
     
-    // Calculate decay-adjusted score
+    // Calculate base similarity from distance
     const rawScore = 1 / (1 + row.distance); // Convert distance to similarity (0-1)
-    const decayRate = DECAY_RATES[encode.memory_type];
-    const decayedScore = rawScore * Math.pow(1 - decayRate, daysOld);
     
-    // Apply recency boost to fight "Dude Where's My Car" problem
-    // Recent memories get boosted to compete with older, reinforced ones
+    // Get significance from trace (default 5 if not available)
+    const significance = 5; // TODO: Join with traces table to get actual significance
+    
+    // Calculate full memory strength with reinforcement
+    const { finalScore } = calculateMemoryStrength(
+      rawScore,
+      daysOld,
+      encode.memory_type,
+      significance,
+      encode.encode_id,
+      agentId || encode.agent_id,
+      'query'
+    );
+    
     const recencyBoost = getRecencyBoost(daysOld);
-    const finalScore = decayedScore * recencyBoost;
+    const reinforcementScore = getReinforcementScore(encode.encode_id);
     
     return {
       encode,
       distance: row.distance,
       adjusted_score: finalScore,
       days_old: Math.round(daysOld),
-      recency_boost: recencyBoost
+      recency_boost: recencyBoost,
+      reinforcement: reinforcementScore
     };
   });
   

@@ -5,6 +5,7 @@ import { captureTrace } from './trace/capture.js';
 import { runEncodePipeline, generateEmbedding } from './encode/pipeline.js';
 import { getTraceCount, getTraceCountByStatus } from './db/traces.js';
 import { getEncodeCount, semanticSearch, semanticSearchWithDecay, getEncodesForBoot } from './db/encodes.js';
+import { runConsolidation, getConsolidationHistory, getHotMemories } from './db/access.js';
 import { sweepSessions } from './trace/sweep.js';
 import { config } from './config.js';
 
@@ -37,6 +38,12 @@ async function main(): Promise<void> {
         break;
       case 'boot':
         await handleBoot(args.slice(1));
+        break;
+      case 'consolidate':
+        await handleConsolidate();
+        break;
+      case 'hot-memories':
+        await handleHotMemories(args.slice(1));
         break;
       default:
         showHelp();
@@ -229,8 +236,8 @@ async function handleQuery(args: string[]): Promise<void> {
     console.log(`\nFound ${results.length} results:\n`);
 
     for (let i = 0; i < results.length; i++) {
-      const { encode, distance, adjusted_score, days_old, recency_boost } = results[i];
-      console.log(`--- Result ${i + 1} (distance: ${distance.toFixed(4)}, adjusted: ${adjusted_score.toFixed(4)}, age: ${days_old}d, boost: ${recency_boost.toFixed(1)}x) ---`);
+      const { encode, distance, adjusted_score, days_old, recency_boost, reinforcement } = results[i];
+      console.log(`--- Result ${i + 1} (distance: ${distance.toFixed(4)}, score: ${adjusted_score.toFixed(4)}, age: ${days_old}d, boost: ${recency_boost.toFixed(1)}x, reinforced: ${reinforcement.toFixed(1)}x) ---`);
       console.log(`Summary: ${encode.semantic_summary}`);
       console.log(`Agent: ${encode.agent_id}`);
       console.log(`Memory Type: ${encode.memory_type}`);
@@ -266,6 +273,12 @@ async function handleStatus(): Promise<void> {
   const encodedTraces = getTraceCountByStatus('encoded');
   const skippedTraces = getTraceCountByStatus('skipped');
   const totalEncodes = getEncodeCount();
+  
+  // Get access tracking stats
+  const db = (await import('./db/init.js')).getDb();
+  const accessCount = db.prepare('SELECT COUNT(*) as count FROM memory_access_log').get() as any;
+  const reinforcedCount = db.prepare('SELECT COUNT(*) as count FROM memory_reinforcement').get() as any;
+  const consolidationHistory = getConsolidationHistory(1);
 
   console.log('RECALL Status');
   console.log('=============');
@@ -281,9 +294,22 @@ async function handleStatus(): Promise<void> {
   console.log('Encodes:');
   console.log(`  Total: ${totalEncodes}`);
   console.log();
-  console.log('v0.3 Features:');
+  console.log('Temporal Decay System:');
+  console.log(`  Memory accesses logged: ${accessCount?.count || 0}`);
+  console.log(`  Reinforced memories: ${reinforcedCount?.count || 0}`);
+  if (consolidationHistory.length > 0) {
+    const last = consolidationHistory[0];
+    console.log(`  Last consolidation: ${new Date(last.started_at).toLocaleString()}`);
+    console.log(`    Processed: ${last.memories_processed}, Reinforced: ${last.memories_reinforced}, Pruned: ${last.memories_pruned}`);
+  }
+  console.log();
+  console.log('v0.4 Features:');
   console.log('  ✓ Memory types (episodic, semantic, procedural, self_model)');
-  console.log('  ✓ Decay-adjusted scoring');
+  console.log('  ✓ Temporal decay (type-based rates + significance modifiers)');
+  console.log('  ✓ Recency boost (recent memories surface faster)');
+  console.log('  ✓ Reinforcement scoring (accessed memories strengthen)');
+  console.log('  ✓ Access logging (every recall tracked)');
+  console.log('  ✓ Consolidation pipeline (periodic strength updates)');
   console.log('  ✓ Memory bonds');
   console.log('  ✓ Contradiction detection');
   console.log('  ✓ Significance scoring (1-10)');
@@ -389,6 +415,62 @@ async function handleBoot(args: string[]): Promise<void> {
   console.log('</context>');
 }
 
+async function handleConsolidate(): Promise<void> {
+  console.log('Running memory consolidation...');
+  console.log('This updates reinforcement scores and prunes decayed memories.');
+  console.log();
+  
+  const result = runConsolidation();
+  
+  console.log('Consolidation complete:');
+  console.log(`  Memories processed: ${result.processed}`);
+  console.log(`  Memories reinforced: ${result.reinforced}`);
+  console.log(`  Memories pruned: ${result.pruned}`);
+  
+  if (result.pruned > 0) {
+    console.log();
+    console.log(`  ${result.pruned} memories have fully decayed and were removed from reinforcement tracking.`);
+  }
+}
+
+async function handleHotMemories(args: string[]): Promise<void> {
+  let agentId = 'unknown';
+  let limit = 10;
+  
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--agent':
+      case '-a':
+        agentId = args[++i];
+        break;
+      case '--limit':
+      case '-l':
+        limit = parseInt(args[++i], 10);
+        break;
+    }
+  }
+  
+  console.log(`🔥 Hot Memories for ${agentId} (last 7 days)`);
+  console.log();
+  
+  const hot = getHotMemories(agentId, limit);
+  
+  if (hot.length === 0) {
+    console.log('No recently accessed memories.');
+    return;
+  }
+  
+  for (let i = 0; i < hot.length; i++) {
+    const m = hot[i];
+    console.log(`${i + 1}. ${m.encode_id.substring(0, 8)}...`);
+    console.log(`   Accesses (7d): ${m.accesses} | Reinforcement: ${m.score.toFixed(2)}x`);
+  }
+  
+  console.log();
+  console.log('These memories are being reinforced due to frequent access.');
+  console.log('They will resist decay and stay salient longer.');
+}
+
 function showHelp(): void {
   console.log(`
 RECALL - Memory system for AI agents
@@ -421,6 +503,10 @@ Commands:
     --no-bonds            Skip related memory clusters
   query [options] <text>  Search encodes by semantic similarity
     --no-decay            Disable decay-adjusted scoring
+    --limit, -l <n>       Number of results (default: 10)
+  consolidate             Run memory consolidation (update reinforcement scores)
+  hot-memories [options]  Show most accessed memories (reinforced)
+    --agent, -a <id>      Agent ID (required)
     --limit, -l <n>       Number of results (default: 10)
   status                  Show database status
 
