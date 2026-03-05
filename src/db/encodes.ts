@@ -19,6 +19,15 @@ export function getDecayModifier(significance: number): number {
   return 1.3; // Accelerated decay for low significance
 }
 
+// Recency boost multipliers for "Dude Where's My Car" problem
+// Recent memories get boosted to compete with older, heavily-reinforced ones
+export function getRecencyBoost(daysOld: number): number {
+  if (daysOld <= 1) return 2.0;      // Last 24h: 2x boost
+  if (daysOld <= 2) return 1.5;      // 24-48h: 1.5x boost
+  if (daysOld <= 3) return 1.2;      // 48-72h: 1.2x boost
+  return 1.0;                        // >72h: no boost
+}
+
 export interface Encode {
   encode_id: string;
   agent_id: string;
@@ -149,7 +158,7 @@ export function semanticSearchWithDecay(
   queryEmbedding: number[], 
   limit: number = 10,
   significanceThreshold: number = 0
-): Array<{ encode: Encode; distance: number; adjusted_score: number; days_old: number }> {
+): Array<{ encode: Encode; distance: number; adjusted_score: number; days_old: number; recency_boost: number }> {
   const db = getDb();
   const now = new Date();
   
@@ -168,7 +177,7 @@ export function semanticSearchWithDecay(
   
   const rows = stmt.all(queryVec, limit * 3) as any[];
   
-  // Apply decay to scores
+  // Apply decay and recency boost to scores
   const results = rows.map(row => {
     const encode = rowToEncode(row);
     const encodeDate = new Date(encode.timestamp_encoded);
@@ -179,11 +188,17 @@ export function semanticSearchWithDecay(
     const decayRate = DECAY_RATES[encode.memory_type];
     const decayedScore = rawScore * Math.pow(1 - decayRate, daysOld);
     
+    // Apply recency boost to fight "Dude Where's My Car" problem
+    // Recent memories get boosted to compete with older, reinforced ones
+    const recencyBoost = getRecencyBoost(daysOld);
+    const finalScore = decayedScore * recencyBoost;
+    
     return {
       encode,
       distance: row.distance,
-      adjusted_score: decayedScore,
-      days_old: Math.round(daysOld)
+      adjusted_score: finalScore,
+      days_old: Math.round(daysOld),
+      recency_boost: recencyBoost
     };
   });
   

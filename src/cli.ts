@@ -229,8 +229,8 @@ async function handleQuery(args: string[]): Promise<void> {
     console.log(`\nFound ${results.length} results:\n`);
 
     for (let i = 0; i < results.length; i++) {
-      const { encode, distance, adjusted_score, days_old } = results[i];
-      console.log(`--- Result ${i + 1} (distance: ${distance.toFixed(4)}, adjusted: ${adjusted_score.toFixed(4)}, age: ${days_old}d) ---`);
+      const { encode, distance, adjusted_score, days_old, recency_boost } = results[i];
+      console.log(`--- Result ${i + 1} (distance: ${distance.toFixed(4)}, adjusted: ${adjusted_score.toFixed(4)}, age: ${days_old}d, boost: ${recency_boost.toFixed(1)}x) ---`);
       console.log(`Summary: ${encode.semantic_summary}`);
       console.log(`Agent: ${encode.agent_id}`);
       console.log(`Memory Type: ${encode.memory_type}`);
