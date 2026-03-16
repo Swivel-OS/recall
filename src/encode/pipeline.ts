@@ -78,7 +78,7 @@ export interface EncodePipelineOptions {
 
 export async function runEncodePipeline(options: EncodePipelineOptions = {}): Promise<EncodeResult[]> {
   const batchSize = options.batchSize || 50;
-  const concurrency = options.concurrency || 5;
+  const concurrency = options.concurrency || 2; // Reduced from 5 — gpt-4o-mini TPM ceiling (200K)
   const createBonds = options.createBonds !== false;
   const detectContradictions = options.detectContradictions !== false;
 
