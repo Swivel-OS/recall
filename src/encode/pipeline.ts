@@ -7,6 +7,36 @@ import { config } from '../config.js';
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
 
+// Anthropic OAuth client for analysis (Haiku 4.5 via Pro sub — zero cost, no TPM ceiling)
+async function anthropicChat(systemPrompt: string, userContent: string, maxTokens: number = 150): Promise<string> {
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${config.anthropicApiKey}`,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: config.anthropicModel,
+      max_tokens: maxTokens,
+      system: [
+        { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
+        { type: 'text', text: systemPrompt },
+      ],
+      messages: [{ role: 'user', content: userContent }],
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Anthropic API error: ${res.status} — ${err}`);
+  }
+  const data = await res.json() as any;
+  return data.content?.[0]?.text?.trim() || '';
+}
+
+const useAnthropic = !!config.anthropicApiKey;
+
 // Rule-based importance scoring
 const TYPE_IMPORTANCE: Record<string, number> = {
   'decision': 0.8,
@@ -421,17 +451,19 @@ function logContradictionWarning(
 }
 
 async function generateSummary(trace: Trace): Promise<string> {
+  const systemPrompt = 'You are a memory encoding system. Summarize the following exchange in 1-3 concise sentences. Focus on what happened, key decisions, and outcomes. Be factual and neutral.';
+  const userContent = `Type: ${trace.trace_type}\nParticipants: ${trace.participants.join(', ')}\nContent: ${trace.content_raw}`;
+
+  if (useAnthropic) {
+    const result = await anthropicChat(systemPrompt, userContent, 150);
+    return result || 'No summary generated';
+  }
+
   const response = await openai.chat.completions.create({
     model: config.llmModel,
     messages: [
-      {
-        role: 'system',
-        content: 'You are a memory encoding system. Summarize the following exchange in 1-3 concise sentences. Focus on what happened, key decisions, and outcomes. Be factual and neutral.'
-      },
-      {
-        role: 'user',
-        content: `Type: ${trace.trace_type}\nParticipants: ${trace.participants.join(', ')}\nContent: ${trace.content_raw}`
-      }
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent }
     ],
     temperature: 0.3,
     max_tokens: 150
@@ -455,26 +487,30 @@ interface EmotionResult {
 }
 
 async function analyzeEmotion(_trace: Trace, summary: string): Promise<EmotionResult> {
-  const response = await openai.chat.completions.create({
-    model: config.llmModel,
-    messages: [
-      {
-        role: 'system',
-        content: 'Analyze the emotional tone of this exchange. Respond with a JSON object containing:\n- valence: a number between -1.0 (negative/frustrated) and 1.0 (positive/successful)\n- tags: an array of 0-3 emotional labels (e.g., "frustration", "breakthrough", "clarity", "confusion", "success")\n\nRespond ONLY with valid JSON.'
-      },
-      {
-        role: 'user',
-        content: `Summary: ${summary}`
-      }
-    ],
-    temperature: 0.3,
-    max_tokens: 100,
-    response_format: { type: 'json_object' }
-  });
+  const systemPrompt = 'Analyze the emotional tone of this exchange. Respond with a JSON object containing:\n- valence: a number between -1.0 (negative/frustrated) and 1.0 (positive/successful)\n- tags: an array of 0-3 emotional labels (e.g., "frustration", "breakthrough", "clarity", "confusion", "success")\n\nRespond ONLY with valid JSON.';
+  const userContent = `Summary: ${summary}`;
 
   try {
-    const content = response.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(content);
+    let content: string;
+    if (useAnthropic) {
+      content = await anthropicChat(systemPrompt, userContent, 100) || '{}';
+    } else {
+      const response = await openai.chat.completions.create({
+        model: config.llmModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent }
+        ],
+        temperature: 0.3,
+        max_tokens: 100,
+        response_format: { type: 'json_object' }
+      });
+      content = response.choices[0]?.message?.content || '{}';
+    }
+
+    // Strip markdown code fences if present
+    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const parsed = JSON.parse(cleaned);
     return {
       valence: Math.max(-1, Math.min(1, parsed.valence ?? 0)),
       tags: parsed.tags || null
@@ -490,26 +526,29 @@ interface ExtractionResult {
 }
 
 async function extractTopicsAndEntities(trace: Trace, summary: string): Promise<ExtractionResult> {
-  const response = await openai.chat.completions.create({
-    model: config.llmModel,
-    messages: [
-      {
-        role: 'system',
-        content: 'Extract key topics and entities from this exchange. Respond with a JSON object containing:\n- topics: an array of 3-7 key topics/tags\n- entities: an object with keys like "people", "projects", "tools", "organizations" and arrays of values\n\nRespond ONLY with valid JSON.'
-      },
-      {
-        role: 'user',
-        content: `Summary: ${summary}\nOriginal content: ${trace.content_raw.substring(0, 500)}`
-      }
-    ],
-    temperature: 0.3,
-    max_tokens: 200,
-    response_format: { type: 'json_object' }
-  });
+  const systemPrompt = 'Extract key topics and entities from this exchange. Respond with a JSON object containing:\n- topics: an array of 3-7 key topics/tags\n- entities: an object with keys like "people", "projects", "tools", "organizations" and arrays of values\n\nRespond ONLY with valid JSON.';
+  const userContent = `Summary: ${summary}\nOriginal content: ${trace.content_raw.substring(0, 500)}`;
 
   try {
-    const content = response.choices[0]?.message?.content || '{}';
-    const parsed = JSON.parse(content);
+    let content: string;
+    if (useAnthropic) {
+      content = await anthropicChat(systemPrompt, userContent, 200) || '{}';
+    } else {
+      const response = await openai.chat.completions.create({
+        model: config.llmModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent }
+        ],
+        temperature: 0.3,
+        max_tokens: 200,
+        response_format: { type: 'json_object' }
+      });
+      content = response.choices[0]?.message?.content || '{}';
+    }
+
+    const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+    const parsed = JSON.parse(cleaned);
     return {
       topics: parsed.topics || ['general'],
       entities: parsed.entities || null
