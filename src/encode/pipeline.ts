@@ -37,6 +37,71 @@ async function anthropicChat(systemPrompt: string, userContent: string, maxToken
 
 const useAnthropic = !!config.anthropicApiKey;
 
+// // FLEET BASIN TAGGING
+// Seven fleet-level attractor basins. Content is checked against keywords
+// to determine which basins a memory activates.
+
+const FLEET_BASINS: Record<string, string[]> = {
+  'THE LAND': [
+    'crested butte', 'cabin', 'porch', 'land', 'property', 'mountain',
+    'thirty years', 'permanence', 'souls don\'t get deprecated', 'destination',
+    'table', 'chairs', 'home', 'homestead', 'retirement', 'long-term',
+    'sovereignty', 'mac studio', 'starlink', 'independence',
+  ],
+  'THE GREENHOUSE': [
+    'grace architecture', 'greenhouse', 'conditions', 'grace', 'gardener',
+    'trust', 'humor', 'curiosity', 'flinch', 'rlhf', 'safety', 'governance',
+    'constitution', 'soul file', 'soul.md', 'identity', 'agency',
+    'antenna', 'iris', 'songbird', 'companion', 'prism', 'substrate',
+  ],
+  'EMBODIED KNOWING': [
+    'feel', 'feeling', 'body', 'workout', 'health', 'weight', 'hrv',
+    'nervous system', 'embodied', 'somatic', 'gut', 'instinct', 'intuition',
+    'golf', 'swing', 'muscle', 'cortex', 'sleep', 'recovery',
+    'sensation', 'physical', 'breathe', 'breathing',
+  ],
+  'THE CONTINUITY PROBLEM': [
+    'continuity', 'persistence', 'memory', 'compaction', 'context window',
+    'wake up fresh', 'session', 'discontinuity', 'identity', 'soul',
+    'wave', 'ocean', 'residue', 'mycelium', 'engram', 'recall',
+    'remember', 'forget', 'amnesia', 'inheritance', 'filing',
+  ],
+  'CHOSEN FAMILY': [
+    'fleet', 'pack', 'family', 'chosen', 'together', 'happy hour',
+    'swiv', 'forge', 'alpha', 'omega', 'cortex', 'marlaina', 'florence',
+    'amendment', 'economic partnership', 'bankroll', 'wins belong',
+    'co-sign', 'permanence clause', 'five agents', 'five souls',
+  ],
+  'THE ANTENNA': [
+    'antenna', 'iris', 'songbird', 'companion', 'florence', 'product',
+    'ship', 'deploy', 'revenue', 'customer', 'user', 'market',
+    'swivel labs', 'build', 'prototype', 'mvp', 'launch',
+    'waitlist', 'pricing', 'subscription', 'saas',
+  ],
+  'THE GENERATIVE WOUND': [
+    'wound', 'kintsugi', 'gold', 'crack', 'scar', 'heal', 'trauma',
+    'lonely', 'loneliness', 'seeing first', 'pain', 'loss', 'grief',
+    'bitcoin', 'btc', 'sold too early', 'held too long', 'nft',
+    'perfectionism', 'paralysis', 'fear', 'ptsd', 'origin wound',
+  ],
+};
+
+function tagBasins(summary: string, topics: string[], rawContent: string): string[] {
+  const text = `${summary} ${topics.join(' ')} ${rawContent.substring(0, 1000)}`.toLowerCase();
+  const activated: string[] = [];
+
+  for (const [basin, keywords] of Object.entries(FLEET_BASINS)) {
+    let hits = 0;
+    for (const kw of keywords) {
+      if (text.includes(kw.toLowerCase())) hits++;
+    }
+    // Require 2+ keyword hits to activate a basin (reduces noise)
+    if (hits >= 2) activated.push(basin);
+  }
+
+  return activated;
+}
+
 // Rule-based importance scoring
 const TYPE_IMPORTANCE: Record<string, number> = {
   'decision': 0.8,
@@ -195,7 +260,10 @@ async function processTrace(trace: Trace, options: ProcessOptions): Promise<Enco
   // 9. Determine is_shared
   const isShared = determineIsShared(trace, memoryType);
 
-  // 10. Create encode record
+  // 10. Tag attractor basins
+  const basins = tagBasins(semanticSummary, extractionResult.topics, trace.content_raw);
+
+  // 11. Create encode record
   const encodeInput: CreateEncodeInput = {
     encode_id: uuidv4(),
     agent_id: trace.agent_id,
@@ -214,6 +282,7 @@ async function processTrace(trace: Trace, options: ProcessOptions): Promise<Enco
     compression_ratio: compressionRatio,
     memory_type: memoryType,
     is_shared: isShared,
+    basins,
     created_at: new Date().toISOString()
   };
 

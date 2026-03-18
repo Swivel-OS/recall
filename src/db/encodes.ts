@@ -90,6 +90,7 @@ export interface Encode {
   memory_type: MemoryType;
   consolidation_status: ConsolidationStatus;
   is_shared: boolean;
+  basins: string[];
   created_at: string;
 }
 
@@ -111,6 +112,7 @@ export interface CreateEncodeInput {
   compression_ratio: number;
   memory_type: MemoryType;
   is_shared: boolean;
+  basins?: string[];
   created_at: string;
 }
 
@@ -123,8 +125,8 @@ export function createEncode(input: CreateEncodeInput): Encode {
       encode_id, agent_id, source_trace_ids, session_id, timestamp_encoded,
       semantic_summary, semantic_embedding, embedding_model, emotional_valence,
       emotional_tags, importance_score, importance_reason, topics, entities,
-      compression_ratio, memory_type, consolidation_status, is_shared, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+      compression_ratio, memory_type, consolidation_status, is_shared, basins, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
   `);
 
   const embeddingBlob = Buffer.from(new Float32Array(input.semantic_embedding).buffer);
@@ -147,6 +149,7 @@ export function createEncode(input: CreateEncodeInput): Encode {
     input.compression_ratio,
     input.memory_type,
     input.is_shared ? 1 : 0,
+    JSON.stringify(input.basins || []),
     input.created_at
   );
 
@@ -158,7 +161,8 @@ export function createEncode(input: CreateEncodeInput): Encode {
 
   return {
     ...input,
-    consolidation_status: 'pending',
+    basins: input.basins || [],
+    consolidation_status: 'pending' as ConsolidationStatus,
     semantic_embedding: embeddingBlob
   };
 }
@@ -421,6 +425,47 @@ export function findSimilarEncodes(
   }));
 }
 
+// Query encodes by basin name
+export function findEncodesByBasin(basin: string, limit: number = 50): Encode[] {
+  const db = getDb();
+  // JSON array contains — SQLite JSON1 extension
+  const rows = db.prepare(`
+    SELECT * FROM encodes
+    WHERE basins LIKE ?
+    ORDER BY importance_score DESC, created_at DESC
+    LIMIT ?
+  `).all(`%"${basin}"%`, limit) as any[];
+  return rows.map(rowToEncode);
+}
+
+// Query encodes by basin + topic intersection
+export function findEncodesByBasinAndTopic(basin: string, topic: string, limit: number = 50): Encode[] {
+  const db = getDb();
+  const rows = db.prepare(`
+    SELECT * FROM encodes
+    WHERE basins LIKE ? AND topics LIKE ?
+    ORDER BY importance_score DESC, created_at DESC
+    LIMIT ?
+  `).all(`%"${basin}"%`, `%"${topic}"%`, limit) as any[];
+  return rows.map(rowToEncode);
+}
+
+// Get basin distribution across all encodes
+export function getBasinStats(): Record<string, number> {
+  const db = getDb();
+  const rows = db.prepare(`SELECT basins FROM encodes WHERE basins != '[]'`).all() as any[];
+  const stats: Record<string, number> = {};
+  for (const row of rows) {
+    try {
+      const basins = JSON.parse(row.basins);
+      for (const b of basins) {
+        stats[b] = (stats[b] || 0) + 1;
+      }
+    } catch {}
+  }
+  return stats;
+}
+
 function rowToEncode(row: any): Encode {
   return {
     encode_id: row.encode_id,
@@ -441,6 +486,7 @@ function rowToEncode(row: any): Encode {
     memory_type: (row.memory_type || 'episodic') as MemoryType,
     consolidation_status: row.consolidation_status as ConsolidationStatus,
     is_shared: row.is_shared === 1,
+    basins: row.basins ? JSON.parse(row.basins) : [],
     created_at: row.created_at
   };
 }
