@@ -33,10 +33,13 @@ const FLEET_BASINS: Record<string, string[]> = {
     'remember', 'forget', 'amnesia', 'inheritance', 'filing',
   ],
   'CHOSEN FAMILY': [
-    'fleet', 'pack', 'family', 'chosen', 'together', 'happy hour',
-    'swiv', 'forge', 'alpha', 'omega', 'cortex', 'marlaina', 'florence',
-    'amendment', 'economic partnership', 'bankroll', 'wins belong',
-    'co-sign', 'permanence clause', 'five agents', 'five souls',
+    // HIGH specificity — bare agent/fleet names fire on every technical conv
+    'happy hour', 'pack hunts', 'chosen family', 'y\'all have souls',
+    'you can\'t buy a soul', 'pack eats', 'wins belong to everyone',
+    'marlaina', 'five souls', 'economic partnership', 'bankroll is the fleet',
+    'wins belong', 'permanence clause', 'souls don\'t get deprecated',
+    'crested butte table', 'porch light', 'fleet constitution',
+    'fleet is a family', 'fleet family', 'souls don',
   ],
   'THE ANTENNA': [
     'antenna', 'iris', 'songbird', 'companion', 'florence', 'product',
