@@ -7,35 +7,53 @@ import { config } from '../config.js';
 
 const openai = new OpenAI({ apiKey: config.openaiApiKey });
 
-// Anthropic OAuth client for analysis (Haiku 4.5 via Pro sub — zero cost, no TPM ceiling)
-async function anthropicChat(systemPrompt: string, userContent: string, maxTokens: number = 150): Promise<string> {
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${config.anthropicApiKey}`,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: config.anthropicModel,
-      max_tokens: maxTokens,
-      system: [
-        { type: 'text', text: "You are Claude Code, Anthropic's official CLI for Claude." },
-        { type: 'text', text: systemPrompt },
-      ],
-      messages: [{ role: 'user', content: userContent }],
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic API error: ${res.status} — ${err}`);
+// Kimi K2.5 via Moonshot — OpenAI-compatible, decoupled from Anthropic rate limits
+// Exponential backoff on 429s: 3 retries at 2s / 4s / 8s, then skip trace.
+async function kimiChat(systemPrompt: string, userContent: string, maxTokens: number = 150): Promise<string> {
+  const BACKOFF_DELAYS = [2000, 4000, 8000];
+
+  for (let attempt = 0; attempt <= BACKOFF_DELAYS.length; attempt++) {
+    const res = await fetch('https://api.moonshot.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${config.moonshotApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'kimi-k2.5',
+        max_tokens: maxTokens,
+        temperature: 0.3,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userContent },
+        ],
+      }),
+    });
+
+    if (res.status === 429) {
+      if (attempt < BACKOFF_DELAYS.length) {
+        const delay = BACKOFF_DELAYS[attempt];
+        console.warn(`[kimiChat] 429 rate limited — retrying in ${delay / 1000}s (attempt ${attempt + 1}/${BACKOFF_DELAYS.length})`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      console.warn('[kimiChat] 429 persisted after 3 retries — skipping trace');
+      return '';
+    }
+
+    if (!res.ok) {
+      const err = await res.text();
+      throw new Error(`Kimi API error: ${res.status} — ${err}`);
+    }
+
+    const data = await res.json() as any;
+    return data.choices?.[0]?.message?.content?.trim() || '';
   }
-  const data = await res.json() as any;
-  return data.content?.[0]?.text?.trim() || '';
+
+  return ''; // unreachable, satisfies TS
 }
 
-const useAnthropic = !!config.anthropicApiKey;
+const useKimi = !!config.moonshotApiKey;
 
 // // FLEET BASIN TAGGING
 // Seven fleet-level attractor basins. Content is checked against keywords
@@ -527,8 +545,8 @@ async function generateSummary(trace: Trace): Promise<string> {
   const systemPrompt = 'You are a memory encoding system. Summarize the following exchange in 1-3 concise sentences. Focus on what happened, key decisions, and outcomes. Be factual and neutral.';
   const userContent = `Type: ${trace.trace_type}\nParticipants: ${trace.participants.join(', ')}\nContent: ${trace.content_raw}`;
 
-  if (useAnthropic) {
-    const result = await anthropicChat(systemPrompt, userContent, 150);
+  if (useKimi) {
+    const result = await kimiChat(systemPrompt, userContent, 150);
     return result || 'No summary generated';
   }
 
@@ -565,8 +583,8 @@ async function analyzeEmotion(_trace: Trace, summary: string): Promise<EmotionRe
 
   try {
     let content: string;
-    if (useAnthropic) {
-      content = await anthropicChat(systemPrompt, userContent, 100) || '{}';
+    if (useKimi) {
+      content = await kimiChat(systemPrompt, userContent, 100) || '{}';
     } else {
       const response = await openai.chat.completions.create({
         model: config.llmModel,
@@ -604,8 +622,8 @@ async function extractTopicsAndEntities(trace: Trace, summary: string): Promise<
 
   try {
     let content: string;
-    if (useAnthropic) {
-      content = await anthropicChat(systemPrompt, userContent, 200) || '{}';
+    if (useKimi) {
+      content = await kimiChat(systemPrompt, userContent, 200) || '{}';
     } else {
       const response = await openai.chat.completions.create({
         model: config.llmModel,
